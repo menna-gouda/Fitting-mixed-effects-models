@@ -1,0 +1,168 @@
+---
+title: "First draft of titer models"
+author: Menna
+output: html_notebook
+---
+```{r}
+rm(list = ls())
+library(nlme)
+library(dplyr)
+```
+
+```{r}
+# This function and others will be relocated to a "base_functions.R" file and source from it 
+calc_percent_parms_in_CI <- function(percents, intercept, slope, CIs) {
+  
+  # This function calculates percentages of intercept and/or slope values lying within the estimated CIs
+  # CIs is a 2x2 matrix where  
+  #             lower bound    upper bound 
+  # intercept         x             y
+  # slope             z             k
+  
+  c1 = percents[1]; c2 = percents[2]; c3 = percents[3]
+  if (CIs[1,1] <= intercept &  intercept <= CIs[1,2])
+    c1 = c1 + 1
+  if (CIs[2,1] <= slope & slope <= CIs[2,2])
+    c2 = c2 + 1
+  if (CIs[1,1] <= intercept & intercept <= CIs[1,2] & CIs[2,1] <= slope & slope <= CIs[2,2])
+    c3 = c3 + 1
+  
+  return(c(c1, c2, c3))
+}  
+```
+
+Inference from a linear model without individual effects
+```{r}
+n_individuals = 50
+IDs = c(1:n_individuals)
+percents = c(0, 0, 0)
+
+# here we do log of means not mean of logs, not the same bec log function isn't linear
+intercept = log(rnorm(1, mean = 40, sd = 10), base = 2) # log(40, base = 2) = 5.3 
+slope = rnorm(1, mean = 0.3, sd = 0.07)
+titer_0 = log(rnorm(n_individuals, mean = 88, sd = 28), base = 2) # log(88, base = 2) = 6.5
+
+for (i in 1:100) {
+  
+  noise = log(rnorm(n_individuals, mean = 5, sd = 1.2), base = 2)
+  
+  titer_30 = intercept + slope * titer_0 + noise
+  # plot(titer_0,titer_30)
+  
+  input_data = data.frame(IDs, titer_0, titer_30)
+ 
+  model <- lm(titer_30 ~ titer_0, data = input_data)
+  # summary(model)
+  
+  # par(mfrow = c(2,2))
+  # plot(model)
+  
+  # Assessing confidence in parameters
+  CIs = confint(model)  # calculates 95% CIs
+
+  percents = calc_percent_parms_in_CI(percents, intercept, slope, CIs)
+}
+
+cat("Percentage of intercept value lying within the estimated CI is", percents[1] * 100 / i, "%", "\n")
+cat("Percentage of slope value lying within the estimated CI is", percents[2] * 100 / i, "%", "\n")
+cat("Percentage of both intercept and slope values lying within the estimated CIs is", percents[3] * 100 / i, "%")
+```
+
+Inference from a mixed effects model (with individual effects fixed across strains)
+```{r}
+n_individuals <- 50
+n_strains <- 2
+IDs <- rep(c(1:n_individuals), n_strains)
+strain <- c(rep("A",n_individuals), rep("B", n_individuals))
+
+# here we do log of means not mean of logs, not the same bec log function isn't linear
+intercept_strain_A = log(rnorm(1, mean = 40, sd = 9), base = 2) # log(40, base = 2) = 5.3 
+intercept_strain_B = log(rnorm(1, mean = 8, sd = 3), base = 2) # log(40, base = 2) = 3
+
+slope_strain_A <- rnorm(1, mean = 0.3, sd = 0.07)
+slope_strain_B <- rnorm(1, mean = 0.5, sd = 0.1)
+
+# strain A: B/Phuket/3073/2013 (only mean is used, not sd bec values go NaN)
+titer_0_strain_A <- log(rnorm(n_individuals, mean = 88, sd = 28), base = 2)  # log(88, base = 2) = 6.5 
+
+# strain B: B/Washington/02/2019 (only mean is used, not sd bec values go NaN)
+titer_0_strain_B <- log(rnorm(n_individuals, mean = 16, sd = 6), base = 2) # log(16, base = 2) = 4 
+
+titer_0 <- c(titer_0_strain_A, titer_0_strain_B)
+
+individual_effect_sd <- 0.3
+individual_effect <- rnorm(n_individuals, mean = 0, sd = individual_effect_sd)
+
+percents_strain_A = c(0, 0, 0)
+percents_strain_B = c(0, 0, 0)
+
+for (i in 1:100) {
+  
+  # strain A
+  noise = log(rnorm(n_individuals, mean = 5, sd = 1.2), base = 2)
+  titer_30_strain_A <- intercept_strain_A + slope_strain_A * titer_0_strain_A + noise + individual_effect
+  
+  # strain B
+  noise = log(rnorm(n_individuals, mean = 5, sd = 1.2), base = 2)
+  titer_30_strain_B <- intercept_strain_B + slope_strain_B * titer_0_strain_B + noise + individual_effect
+  
+  titer_30 <- c(titer_30_strain_A, titer_30_strain_B)
+  
+  input_data <- data.frame(IDs, strain, titer_0, titer_30)
+  input_data <- arrange(input_data, IDs)
+  # print(input_data)
+  
+  # plot(titer_0,titer_30)
+  
+  model <- lme(titer_30 ~ 0 + strain + titer_0:strain, random = ~1|IDs, data = input_data, method = "REML")
+  # summary(model)
+  
+  # par(mfrow = c(2,2))
+  # plot(model)
+  
+  # Assessing confidence in parameters
+  CIs <- intervals(model, which = "fixed")  # calculates 95% CIs
+  CIs <- CIs $fixed[, c("lower", "upper")]
+  
+  
+  percents_strain_A = calc_percent_parms_in_CI(percents_strain_A, intercept_strain_A, slope_strain_A, CIs[c(1,3),])
+  percents_strain_B = calc_percent_parms_in_CI(percents_strain_B, intercept_strain_B, slope_strain_B, CIs[c(2,4),])
+}
+
+# Percentages of intercept and/or slope values lying within the estimated CIs
+percents_of_parameters_in_CIs <- data.frame(percents_strain_A * 100 / i, percents_strain_B * 100 / i)
+rownames(percents_of_parameters_in_CIs) <- c("intercept", "slope", "both")
+colnames(percents_of_parameters_in_CIs) <- c("strain A", "strain B")
+percents_of_parameters_in_CIs
+```
+
+function to introduce censoring 
+```{r}
+censor <- function(titer_0) {
+  lower_limit = 5   # this is the lower limit of detection of titer dilution
+  n_dilutions = 10  # number of dilutions
+  ratio = 2         # denoting serum two-fold dilutions
+  dilutions <- lower_limit * ratio ^ (0:(n_dilutions - 1))
+  log2_dilutions <- log(dilutions, base = 2)
+  
+  censored_titer_0 = titer_0
+  
+  # lower limit of detection
+  censored_titer_0[censored_titer_0 < log2_dilutions[2]] = log2_dilutions[2]
+  
+  # upper limit of detection
+  censored_titer_0[censored_titer_0 > log2_dilutions[9]] = log2_dilutions[9] 
+  
+  # discretization of dilutions
+  for (i in 1:n_individuals) {
+    closest_dilution = rep(Inf, times = n_individuals)
+    for (j in 2:n_dilutions-1) {
+      if (abs(log2_dilutions[j] - censored_titer_0[i]) < abs(closest_dilution[i] - censored_titer_0[i]))
+        closest_dilution[i] = log2_dilutions[j]
+    }
+    censored_titer_0[i] = closest_dilution[i]
+  }
+return(censored_titer_0)
+}
+```
+
