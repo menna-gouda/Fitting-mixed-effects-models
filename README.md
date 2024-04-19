@@ -1,4 +1,4 @@
-# Antibody Titer Data Modeling and Assessment
+# Antibody Titer Data Modelling and Assessment
 
 # About
 This repository contains code for generating synthetic antibody titer data, fitting a simple linear model to it, and assessing whether the model accurately predicts the true parameters used for generating the data. Additionally, a mixed effects model with fixed individual effects across strains is applied to the data.
